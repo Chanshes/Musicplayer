@@ -1,0 +1,23 @@
+{
+  "name": "vue-music-player",
+  "version": "1.0.0",
+  "description": "A simple music player built with Vue.js that supports local music playback.",
+  "main": "src/main.ts",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "vue": "^3.0.0",
+    "vue-router": "^4.0.0",
+    "vuex": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "typescript": "^4.0.0",
+    "vite": "^7.1.4",
+    "vue-cli-service": "^5.0.0"
+  },
+  "license": "MIT"
+}
