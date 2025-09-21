@@ -13,6 +13,6 @@
       "@/*": ["*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.vue"],
-  "exclude": ["node_modules"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/MusicPlayer.vue"],
+  "exclude": ["node_modules", "src/views/MusicPlayer.vue"]
 }
