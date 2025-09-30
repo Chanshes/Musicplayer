@@ -1,3 +1,4 @@
+<!-- 模板部分 -->
 <template>
   <div class="music-player">
     <h2>本地音乐播放器</h2>
@@ -32,12 +33,6 @@
       <p>暂无音乐文件</p>
       <p class="default-info">请添加音乐文件到 public/music 目录</p>
     </div>
-
-    <!-- 歌词显示区域 -->
-    <div v-if="lyrics" class="lyrics-container">
-      <h3>歌词</h3>
-      <pre>{{ lyrics }}</pre>
-    </div>
   </div>
 
   <!-- 播放控制栏 -->
@@ -54,6 +49,13 @@
         <div class="player-controls">
           <div class="player-info">
             <span v-if="currentSong">当前播放: {{ currentSong.displayName }} - {{ currentSong.artist }}</span>
+            <!-- QQ音乐风格歌词按钮 -->
+            <button class="lyrics-toggle-btn" :class="{ 'has-lyrics': showLyricsPanel && currentSong?.lrcLines && currentSong.lrcLines.length > 0 }" 
+                    @click="toggleLyricsDisplay" 
+                    :title="showLyricsPanel ? '隐藏歌词' : '显示歌词'">
+              词
+              <span v-if="showLyricsPanel && currentSong?.lrcLines && currentSong.lrcLines.length > 0" class="lyrics-checkmark">✓</span>
+            </button>
           </div>
 
           <div class="player-buttons">
@@ -73,6 +75,30 @@
         </div>
       </div>
     </transition>
+  </div>
+
+  <!-- 歌词面板（左侧） -->
+  <div class="lyrics-panel" :class="{ open: showLyricsPanel }"
+    :style="{ transform: showLyricsPanel ? 'translateX(0)' : 'translateX(-100%)' }">
+    <div class="lyrics-panel-header">
+      <span>歌词 - {{ currentSong?.displayName || '' }}</span>
+      <button class="close-lyrics-btn" @click="toggleLyricsDisplay">×</button>
+    </div>
+
+    <div class="lyrics-panel-content">
+      <div v-if="!currentSong?.lrcLines || currentSong.lrcLines.length === 0" class="no-lyrics">
+        暂无歌词
+      </div>
+      <div v-else class="lyrics-lines">
+        <div 
+          v-for="(line, index) in getCurrentLyrics()" 
+          :key="index"
+          :class="['lyrics-line', { current: line.isCurrent }]"
+        >
+          {{ line.text }}
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- 播放列表 -->
@@ -117,18 +143,23 @@
 <script lang="ts">
 import { defineComponent, ref, onMounted, onUnmounted, nextTick, computed, PropType } from 'vue';
 
+interface LrcLine {
+  time: number; // 秒
+  text: string;
+}
+
 interface SongFile {
   name: string;
   url: string;
   displayName: string;
   artist: string;
+  lrcLines?: LrcLine[]; // 解析后的歌词行
 }
 
 export default defineComponent({
   name: 'MusicPlayer',
   setup() {
     // 状态管理
-    const lyrics = ref<string | null>(null);
     const songs = ref<SongFile[]>([]);
     const audioRef = ref<HTMLAudioElement | null>(null);
     const audioUrl = ref<string | null>(null);
@@ -151,6 +182,36 @@ export default defineComponent({
     const playlistContainer = ref<Element | null>(null);
     const noteElement = ref<HTMLElement | null>(null);
     const targetElement = ref<HTMLElement | null>(null);
+    
+    // 歌词相关状态
+    const currentLrcIndex = ref(-1);
+    const showLyricsPanel = ref(false);
+
+    // 文件名解析函数
+    const parseFileName = (fileName: string) => {
+      // 移除文件扩展名
+      const nameWithoutExt = fileName.replace(/\.(mp3|wav|flac|aac)$/i, '');
+      
+      // 使用破折号分割（格式：歌曲名-艺术家）
+      const parts = nameWithoutExt.split('-');
+      
+      if (parts.length >= 2) {
+        // 最后一个部分是艺术家，前面的是歌曲名
+        const artist = parts.pop()?.trim() || '未知艺术家';
+        const displayName = parts.join('-').trim();
+        
+        return {
+          displayName: displayName || nameWithoutExt,
+          artist: artist || '未知艺术家'
+        };
+      }
+      
+      // 如果没有破折号，整个文件名作为歌曲名
+      return {
+        displayName: nameWithoutExt,
+        artist: '未知艺术家'
+      };
+    };
 
     // 加载歌曲
     const loadSongs = async () => {
@@ -162,21 +223,11 @@ export default defineComponent({
 
         const data = await response.json();
         songs.value = data.map((song: any) => {
-          const name = song.name;
-          const lastDashIndex = name.lastIndexOf('-');
-          let displayName, artist;
-
-          if (lastDashIndex !== -1) {
-            displayName = name.substring(0, lastDashIndex).trim();
-            artist = name.substring(lastDashIndex + 1).trim();
-          } else {
-            displayName = name;
-            artist = '未知艺术家';
-          }
-
+          const { displayName, artist } = parseFileName(song.name);
+          
           return {
-            name,
-            url: `/music/${name}`,
+            name: song.name,
+            url: `/music/${song.name}`,
             displayName,
             artist
           };
@@ -188,6 +239,36 @@ export default defineComponent({
       }
     };
 
+    // 歌词解析函数
+    const parseLrcText = (lrcText: string): LrcLine[] => {
+      if (!lrcText) return [];
+      
+      const lines = lrcText.split('\n');
+      const lrcLines: LrcLine[] = [];
+      
+      lines.forEach(line => {
+        // 匹配时间标签 [mm:ss.xx] 或 [mm:ss]
+        const timeMatch = line.match(/\[(\d+):(\d+)\.?(\d*)\]/);
+        if (timeMatch) {
+          const minutes = parseInt(timeMatch[1]);
+          const seconds = parseInt(timeMatch[2]);
+          const milliseconds = timeMatch[3] ? parseInt(timeMatch[3].padEnd(3, '0')) : 0;
+          const time = minutes * 60 + seconds + milliseconds / 1000;
+          
+          // 提取歌词文本（去除时间标签）
+          const text = line.replace(/\[\d+:\d+\.?\d*\]/g, '').trim();
+          
+          if (text) {
+            lrcLines.push({ time, text });
+          }
+        }
+      });
+      
+      // 按时间排序
+      lrcLines.sort((a, b) => a.time - b.time);
+      return lrcLines;
+    };
+
     // 播放控制
     const playSong = (song: SongFile) => {
       if (!audioRef.value) return;
@@ -197,20 +278,53 @@ export default defineComponent({
       isPlaying.value = true;
       currentPlaylistIdx.value = playlist.value.findIndex(s => s.url === song.url);
 
-      // 尝试加载歌词
-      lyrics.value = null;
+      // 重置歌词状态
+      currentLrcIndex.value = -1;
+      
+      // 尝试加载并解析歌词
       const lrcName = song.name.replace(/\.[^.]+$/, '.lrc');
       fetch(`/music/${lrcName}`)
-        .then(response => response.text())
+        .then(response => {
+          if (response.ok) return response.text();
+          throw new Error('歌词文件不存在');
+        })
         .then(text => {
-          lyrics.value = text;
+          // 解析歌词
+          song.lrcLines = parseLrcText(text);
         })
         .catch(() => {
-          lyrics.value = null;
+          song.lrcLines = [];
         });
 
       audioRef.value.src = song.url;
       audioRef.value.play().catch(e => console.error('播放失败:', e));
+    };
+
+    // 歌词时间轴更新方法
+    const updateLyricsDisplay = () => {
+      if (!currentSong.value || !currentSong.value.lrcLines || !audioRef.value) {
+        currentLrcIndex.value = -1;
+        return;
+      }
+      
+      const currentTime = audioRef.value.currentTime;
+      const lrcLines = currentSong.value.lrcLines;
+      
+      // 提前50毫秒显示下一句
+      const adjustedTime = currentTime + 0.1;
+      
+      // 找到当前应该显示的歌词行
+      let newIndex = -1;
+      for (let i = lrcLines.length - 1; i >= 0; i--) {
+        if (adjustedTime >= lrcLines[i].time) {
+          newIndex = i;
+          break;
+        }
+      }
+      
+      if (newIndex !== currentLrcIndex.value) {
+        currentLrcIndex.value = newIndex;
+      }
     };
 
     // 播放/暂停切换
@@ -269,7 +383,7 @@ export default defineComponent({
       if (event) {
         createNoteAnimation(event, song);
       }
-    
+
       // 添加到播放列表
       if (!playlist.value.find(s => s.url === song.url)) {
         playlist.value.push(song);
@@ -283,7 +397,7 @@ export default defineComponent({
         console.warn('Event or event.target is undefined');
         return;
       }
-    
+
       // 创建音符元素
       noteElement.value = document.createElement('div');
       noteElement.value.className = 'animated-note';
@@ -309,7 +423,7 @@ export default defineComponent({
 
       // 添加动画类
       noteElement.value.classList.add('animate');
-    
+
       // 动画结束后移除元素
       setTimeout(() => {
         if (noteElement.value && noteElement.value.parentNode) {
@@ -381,6 +495,9 @@ export default defineComponent({
       if (!audioRef.value) return;
       currentTime.value = audioRef.value.currentTime;
       duration.value = audioRef.value.duration || 0;
+      
+      // 更新歌词显示
+      updateLyricsDisplay();
     };
 
     const handleAudioEnded = () => {
@@ -427,15 +544,25 @@ export default defineComponent({
       return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
     };
 
-    // 气泡样式
-    const bubbleStyle = (idx: number) => {
-      const hue = (idx * 25) % 360; // 调整色相变化
-      return {
-        'background': `linear-gradient(135deg, hsl(${hue}, 70%, 55%), hsl(${(hue + 30) % 360}, 70%, 45%))`,
-        'box-shadow': '0 4px 15px rgba(0, 0, 0, 0.2)',
-        'transition': 'all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275)',
-        'width': '100%' // 确保宽度填满容器
-      };
+    // 获取当前显示的歌词
+    const getCurrentLyrics = () => {
+      if (!currentSong.value || !currentSong.value.lrcLines || currentLrcIndex.value === -1) {
+        return [];
+      }
+      
+      const lrcLines = currentSong.value.lrcLines;
+      const startIndex = Math.max(0, currentLrcIndex.value - 2);
+      const endIndex = Math.min(lrcLines.length - 1, currentLrcIndex.value + 2);
+      
+      return lrcLines.slice(startIndex, endIndex + 1).map((line, index) => ({
+        ...line,
+        isCurrent: startIndex + index === currentLrcIndex.value
+      }));
+    };
+
+    // 歌词显示/隐藏切换
+    const toggleLyricsDisplay = () => {
+      showLyricsPanel.value = !showLyricsPanel.value;
     };
 
     // 判断歌曲是否正在播放
@@ -522,7 +649,6 @@ export default defineComponent({
     });
 
     return {
-      lyrics,
       songs,
       songsByArtist,
       audioUrl,
@@ -540,7 +666,6 @@ export default defineComponent({
       isCurrentlyPlaying,
       isInPlaylist,
       handleSongClick,
-      bubbleStyle,
       currentSong,
       playSong,
       togglePlayPause,
@@ -557,7 +682,10 @@ export default defineComponent({
       scrollToCurrentSong,
       playFromPlaylist,
       togglePlaylist,
-      setPlayMode
+      setPlayMode,
+      showLyricsPanel,
+      toggleLyricsDisplay,
+      getCurrentLyrics
     };
   }
 });
@@ -580,7 +708,7 @@ export default defineComponent({
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
   color: #333;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .music-player::before {
@@ -668,7 +796,7 @@ h2::after {
   position: relative;
   display: flex;
   align-items: center;
-  width: 100%; /* 确保宽度填满容器 */
+  width: 100%;
 }
 
 .button-bubble {
@@ -682,8 +810,8 @@ h2::after {
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   transition: all 0.3s ease;
   position: relative;
-  overflow: hidden;
-  width: 100%; /* 确保宽度填满容器 */
+  overflow: visible;
+  width: 100%;
   text-align: center;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
   background: linear-gradient(135deg, #7e57c2 0%, #5e35b1 100%);
@@ -699,6 +827,7 @@ h2::after {
   position: relative;
   animation: pulse 2s infinite;
   box-shadow: 0 0 20px rgba(126, 87, 194, 0.4);
+  z-index: 2;
 }
 
 .button-bubble.currently-playing::after {
@@ -706,7 +835,7 @@ h2::after {
   position: absolute;
   top: -15px;
   right: 15px;
-  background: linear-gradient(135deg, #ffeb3b, #ff9800);
+  background: linear-gradient(135deg, #f02819, #ff9800);
   color: #333;
   border-radius: 50%;
   width: 40px;
@@ -718,6 +847,7 @@ h2::after {
   font-weight: bold;
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
   animation: bounce 1.5s ease-in-out infinite;
+  z-index: 3;
 }
 
 @keyframes bounce {
@@ -761,7 +891,7 @@ h2::after {
   z-index: 5;
   transition: all 0.3s ease;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  right: 10px; /* 调整位置 */
+  right: 10px;
 }
 
 .add-to-playlist-btn:hover {
@@ -781,6 +911,7 @@ h2::after {
   transition: transform 0.3s ease;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 20px 20px 0 0;
+  z-index: 999;
 }
 
 .player-bar.closed {
@@ -791,8 +922,9 @@ h2::after {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 20px;
+  padding: 2px 20px;
   cursor: pointer;
+  z-index: 1000;
 }
 
 .toggle-player-bar {
@@ -808,6 +940,7 @@ h2::after {
   align-items: center;
   justify-content: center;
   transition: background 0.2s;
+  z-index: 1001;
 }
 
 .toggle-player-bar:hover {
@@ -815,16 +948,18 @@ h2::after {
 }
 
 .player-bar-content {
-  padding: 15px 20px;
+  padding: 3px 20px 20px 20px;
   display: flex;
   flex-direction: column;
   align-items: center;
   background: rgba(0, 0, 0, 0.1);
+  z-index: 999;
 }
 
 .player-controls {
   width: 100%;
   max-width: 800px;
+  z-index: 1000;
 }
 
 .player-info {
@@ -835,13 +970,17 @@ h2::after {
   font-size: 1.1rem;
   width: 100%;
   color: #e0e0ff;
+  z-index: 999;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .player-buttons {
   display: flex;
   justify-content: center;
-  gap: 20px;
-  margin: 15px 0;
+  gap: 16px;
+  margin: 10px 0;
+  z-index: 1000;
 }
 
 .player-btn {
@@ -858,6 +997,7 @@ h2::after {
   justify-content: center;
   transition: all 0.2s;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  z-index: 1001;
 }
 
 .player-btn:hover {
@@ -868,6 +1008,7 @@ h2::after {
 .player-btn.play-btn {
   background: rgba(255, 255, 255, 0.25);
   font-size: 1.8rem;
+  z-index: 1001;
 }
 
 .progress-container {
@@ -875,6 +1016,7 @@ h2::after {
   align-items: center;
   gap: 15px;
   width: 100%;
+  z-index: 999;
 }
 
 .time {
@@ -883,6 +1025,7 @@ h2::after {
   text-align: center;
   font-variant-numeric: tabular-nums;
   color: #e0e0ff;
+  z-index: 1000;
 }
 
 .progress-bar {
@@ -894,6 +1037,7 @@ h2::after {
   border-radius: 4px;
   outline: none;
   overflow: hidden;
+  z-index: 999;
 }
 
 .progress-bar::-webkit-slider-thumb {
@@ -906,6 +1050,7 @@ h2::after {
   transition: all 0.2s;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
   border: 2px solid white;
+  z-index: 1000;
 }
 
 .progress-bar::-webkit-slider-thumb:hover {
@@ -913,32 +1058,169 @@ h2::after {
   background: #ffc107;
 }
 
-.lyrics-container {
-  margin-top: 20px;
-  padding: 15px;
-  background: rgba(255, 255, 255, 0.8);
-  border-radius: 15px;
-  max-height: 300px;
-  overflow-y: auto;
-  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.05);
+/* QQ音乐风格歌词按钮样式 */
+.lyrics-toggle-btn {
+  position: relative;
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  color: #e0e0ff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 10px;
 }
 
-.lyrics-container h3 {
-  margin-bottom: 10px;
-  color: #5e35b1;
-  text-align: center;
-  font-size: 1.4rem;
-  padding-bottom: 10px;
-  border-bottom: 1px solid rgba(126, 87, 194, 0.2);
+.lyrics-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+  transform: scale(1.1);
 }
 
-.lyrics-container pre {
-  white-space: pre-wrap;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  line-height: 1.6;
+.lyrics-toggle-btn.has-lyrics {
+  background: rgba(76, 175, 80, 0.2);
+  border: 1px solid rgba(76, 175, 80, 0.5);
+}
+
+.lyrics-toggle-btn.has-lyrics:hover {
+  background: rgba(76, 175, 80, 0.3);
+}
+
+.lyrics-checkmark {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  background: #4caf50;
+  color: white;
+  border-radius: 50%;
+  width: 14px;
+  height: 14px;
+  font-size: 10px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  animation: checkmarkPop 0.3s ease-out;
+}
+
+@keyframes checkmarkPop {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* 歌词面板样式（左侧，与播放列表对称） */
+.lyrics-panel {
+  position: fixed;
+  top: 20%;
+  left: 0;
+  width: 320px;
+  background: transparent;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.27, 1.155);
+}
+
+.lyrics-panel.open {
+  transform: translateX(0);
+  z-index: 1001;
+}
+
+.lyrics-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: rgba(245, 245, 245, 0.9);
+  border-bottom: 1px solid rgba(224, 224, 224, 0.8);
+  border-radius: 8px 0 0 0;
+  backdrop-filter: blur(10px);
+  z-index: 10;
+}
+
+.lyrics-panel-header span {
+  font-weight: 600;
   color: #333;
+}
+
+.close-lyrics-btn {
+  background: rgba(255, 255, 255, 0.3);
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  color: #666;
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.close-lyrics-btn:hover {
+  background: rgba(255, 255, 255, 0.5);
+  color: #333;
+}
+
+.lyrics-panel-content {
+  padding: 12px;
+  overflow-y: auto;
+  max-height: 50vh;
+  min-height: 25vh;
+  background: transparent;
+  border-radius: 0 0 0 8px;
+  z-index: 9;
+}
+
+.no-lyrics {
   text-align: center;
+  padding: 40px 20px;
+  color: #999;
+  font-style: italic;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 8px;
+  backdrop-filter: blur(5px);
+}
+
+.lyrics-lines {
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 8px;
+  padding: 15px;
+  backdrop-filter: blur(5px);
+}
+
+.lyrics-line {
   font-size: 1.1rem;
+  line-height: 1.6;
+  margin: 10px 0;
+  color: rgba(0, 0, 0, 0.6);
+  transition: all 0.3s ease;
+  text-align: center;
+}
+
+.lyrics-line.current {
+  color: #5e35b1;
+  font-size: 1.3rem;
+  font-weight: 600;
+  transform: scale(1.05);
+  text-shadow: 0 2px 4px rgba(94, 53, 177, 0.3);
 }
 
 .playlist-popup {
@@ -960,6 +1242,7 @@ h2::after {
 .playlist-popup.open {
   transform: translateX(0);
   box-shadow: -2px 0 20px rgba(0, 0, 0, 0.3);
+  z-index: 1001;
 }
 
 .playlist-header {
@@ -969,6 +1252,7 @@ h2::after {
   padding: 12px 16px;
   background: #f5f5f5;
   border-bottom: 1px solid #e0e0e0;
+  z-index: 10;
 }
 
 .clear-btn {
@@ -982,10 +1266,12 @@ h2::after {
   cursor: pointer;
   transition: all 0.2s;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  z-index: 11;
 }
 
 .clear-btn:hover {
   background: linear-gradient(135deg, #ff6b6b, #e53935);
+  z-index: 12;
 }
 
 .play-modes {
@@ -995,6 +1281,7 @@ h2::after {
   padding: 12px;
   background: #f9f9f9;
   border-bottom: 1px solid #e0e0e0;
+  z-index: 10;
 }
 
 .mode-btn {
@@ -1008,12 +1295,14 @@ h2::after {
   cursor: pointer;
   transition: all 0.2s;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  z-index: 11;
 }
 
 .mode-btn.active {
   background: linear-gradient(135deg, #7e57c2, #5e35b1);
   color: white;
   box-shadow: 0 0 10px rgba(126, 87, 194, 0.3);
+  z-index: 12;
 }
 
 .playlist-content {
@@ -1023,6 +1312,7 @@ h2::after {
   min-height: 25vh;
   background: white;
   border-radius: 0 0 8px 8px;
+  z-index: 9;
 }
 
 .playlist-content ul {
@@ -1036,6 +1326,7 @@ h2::after {
   list-style: none;
   margin-bottom: 8px;
   transition: background 0.3s ease;
+  z-index: 10;
 }
 
 .playlist-item {
@@ -1052,12 +1343,14 @@ h2::after {
   transition: all 0.3s ease;
   position: relative;
   overflow: hidden;
+  z-index: 11;
 }
 
 .playlist-item:hover {
   background: #f0f0f0;
   transform: translateY(-2px);
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  z-index: 12;
 }
 
 .playlist-item.playing {
@@ -1065,6 +1358,7 @@ h2::after {
   color: #5e35b1;
   font-weight: 700;
   box-shadow: 0 0 15px rgba(126, 87, 194, 0.2);
+  z-index: 13;
 }
 
 .playlist-item.playing::after {
@@ -1082,6 +1376,7 @@ h2::after {
   display: flex;
   align-items: center;
   justify-content: center;
+  z-index: 14;
 }
 
 .remove-btn {
@@ -1102,12 +1397,13 @@ h2::after {
   justify-content: center;
   border-radius: 50%;
   transition: all 0.2s;
-  z-index: 3;
+  z-index: 15;
 }
 
 .remove-btn:hover {
   background: rgba(211, 47, 47, 0.1);
   transform: translateY(-50%) scale(1.1);
+  z-index: 16;
 }
 
 .empty-playlist {
@@ -1118,6 +1414,7 @@ h2::after {
   background: #f5f5f5;
   border-radius: 8px;
   margin-top: 10px;
+  z-index: 10;
 }
 
 .playlist-toggle {
@@ -1143,10 +1440,11 @@ h2::after {
 }
 
 .playlist-toggle.open {
-  right: 320px;
+  right: 305px;
   background: linear-gradient(135deg, #9575cd, #7e57c2);
   border-radius: 50%;
   transform: translateY(-50%) rotate(180deg);
+  z-index: 1002;
 }
 
 /* 音符动画样式 */
@@ -1164,29 +1462,35 @@ h2::after {
   font-weight: bold;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
   white-space: nowrap;
+  z-index: 1000;
 }
 
 .animated-note.animate {
   animation: noteMove 1s forwards, fadeOut 0.5s forwards 0.8s;
+  z-index: 1000;
 }
 
 @keyframes noteMove {
   0% {
     transform: translate(var(--start-x, 0), var(--start-y, 0)) scale(1);
     opacity: 1;
+    z-index: 1000;
   }
   100% {
     transform: translate(var(--target-x, 0), var(--target-y, 0)) scale(0.8);
     opacity: 0.3;
+    z-index: 1000;
   }
 }
 
 @keyframes fadeOut {
   0% {
     opacity: 1;
+    z-index: 1000;
   }
   100% {
     opacity: 0;
+    z-index: 1000;
   }
 }
 
@@ -1205,7 +1509,8 @@ h2::after {
     min-width: 150px;
   }
 
-  .playlist-popup {
+  .playlist-popup,
+  .lyrics-panel {
     width: 280px;
   }
 
@@ -1235,6 +1540,14 @@ h2::after {
     bottom: 0;
     width: 90%;
   }
+
+  .lyrics-line {
+    font-size: 1rem;
+  }
+  
+  .lyrics-line.current {
+    font-size: 1.2rem;
+  }
 }
 
 @media (max-width: 480px) {
@@ -1250,18 +1563,39 @@ h2::after {
     flex: 1 0 calc(100% - 15px);
   }
 
-  .playlist-popup {
+  .playlist-popup,
+  .lyrics-panel {
     width: 90%;
     right: 5%;
     transform: translateX(105%);
   }
 
-  .playlist-popup.open {
+  .playlist-popup.open,
+  .lyrics-panel.open {
     transform: translateX(5%);
   }
 
   .playlist-toggle {
     display: none;
+  }
+
+  .player-info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  
+  .lyrics-toggle-btn {
+    margin-left: 0;
+    align-self: flex-end;
+  }
+
+  .lyrics-line {
+    font-size: 0.9rem;
+  }
+  
+  .lyrics-line.current {
+    font-size: 1.1rem;
   }
 }
 </style>
