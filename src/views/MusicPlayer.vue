@@ -3,28 +3,82 @@
   <div class="music-player">
     <h2>本地音乐播放器</h2>
 
+    <!-- 分类模式切换 -->
+    <div class="category-controls">
+      <button 
+        class="category-btn" 
+        :class="{ active: categoryMode === 'artist' }"
+        @click="toggleCategoryMode"
+      >
+        按歌手分类
+      </button>
+      <button 
+        class="category-btn" 
+        :class="{ active: categoryMode === 'firstLetter' }"
+        @click="toggleCategoryMode"
+      >
+        按首字母分类
+      </button>
+      <button 
+        class="sort-btn" 
+        :class="{ active: sortOrder === 'desc' }"
+        @click="toggleSortOrder"
+        title="点击切换排序方向"
+      >
+        {{ sortOrder === 'asc' ? 'A→Z' : 'Z→A' }}
+      </button>
+    </div>
+
     <!-- 音乐列表 -->
     <div class="music-list">
-      <div v-for="(artistSongs, artist) in songsByArtist" :key="artist" class="artist-section">
-        <h3>{{ artist }}</h3>
-        <ul class="songs-list">
-          <li v-for="(song, idx) in artistSongs" :key="idx" class="song-item" @mouseenter="setHoveredSong(song)"
-            @mouseleave="hoveredSong = null">
-            <button class="button-bubble" :class="{
-              'currently-playing': isCurrentlyPlaying(song),
-              'in-playlist': isInPlaylist(song)
-            }" @click="handleSongClick($event, song)">
-              {{ song.displayName }}
-              <span v-if="isCurrentlyPlaying(song)" class="playing-indicator">♪</span>
-            </button>
+      <!-- 按歌手分类显示 -->
+      <div v-if="categoryMode === 'artist'">
+        <div v-for="(artistSongs, artist) in songsByArtist" :key="artist" class="artist-section">
+          <h3>{{ artist }}</h3>
+          <ul class="songs-list">
+            <li v-for="(song, idx) in artistSongs" :key="idx" class="song-item" @mouseenter="setHoveredSong(song)"
+              @mouseleave="hoveredSong = null">
+              <button class="button-bubble" :class="{
+                'currently-playing': isCurrentlyPlaying(song),
+                'in-playlist': isInPlaylist(song)
+              }" @click="handleSongClick($event, song)">
+                {{ song.displayName }}
+                <span v-if="isCurrentlyPlaying(song)" class="playing-indicator">♪</span>
+              </button>
 
-            <!-- 添加到播放列表按钮 -->
-            <button v-if="hoveredSong === song && !isInPlaylist(song)" class="add-to-playlist-btn"
-              @click="addToPlaylistEnd(song, $event)">
-              +
-            </button>
-          </li>
-        </ul>
+              <!-- 添加到播放列表按钮 -->
+              <button v-if="hoveredSong === song && !isInPlaylist(song)" class="add-to-playlist-btn"
+                @click="addToPlaylistEnd(song, $event)">
+                +
+              </button>
+            </li>
+          </ul>
+        </div>
+      </div>
+      
+      <!-- 按首字母分类显示 -->
+      <div v-else-if="categoryMode === 'firstLetter'">
+        <div v-for="(letterSongs, letter) in songsByFirstLetter" :key="letter" class="artist-section">
+          <h3>{{ letter }}</h3>
+          <ul class="songs-list">
+            <li v-for="(song, idx) in letterSongs" :key="idx" class="song-item" @mouseenter="setHoveredSong(song)"
+              @mouseleave="hoveredSong = null">
+              <button class="button-bubble" :class="{
+                'currently-playing': isCurrentlyPlaying(song),
+                'in-playlist': isInPlaylist(song)
+              }" @click="handleSongClick($event, song)">
+                {{ song.displayName }} - {{ song.artist }}
+                <span v-if="isCurrentlyPlaying(song)" class="playing-indicator">♪</span>
+              </button>
+
+              <!-- 添加到播放列表按钮 -->
+              <button v-if="hoveredSong === song && !isInPlaylist(song)" class="add-to-playlist-btn"
+                @click="addToPlaylistEnd(song, $event)">
+                +
+              </button>
+            </li>
+          </ul>
+        </div>
       </div>
     </div>
 
@@ -186,6 +240,12 @@ export default defineComponent({
     // 歌词相关状态
     const currentLrcIndex = ref(-1);
     const showLyricsPanel = ref(false);
+    
+    // 分类模式状态
+    const categoryMode = ref<'artist' | 'firstLetter'>('artist');
+    
+    // 排序方向状态 (asc: 升序, desc: 降序)
+    const sortOrder = ref<'asc' | 'desc'>('asc');
 
     // 文件名解析函数
     const parseFileName = (fileName: string) => {
@@ -216,7 +276,7 @@ export default defineComponent({
     // 加载歌曲
     const loadSongs = async () => {
       try {
-        const response = await fetch('/music/songs.json');
+        const response = await fetch('/songs.json');
         if (!response.ok) {
           throw new Error(`网络请求失败: ${response.status}`);
         }
@@ -283,7 +343,7 @@ export default defineComponent({
       
       // 尝试加载并解析歌词
       const lrcName = song.name.replace(/\.[^.]+$/, '.lrc');
-      fetch(`/music/${lrcName}`)
+      fetch(`/lrc/${lrcName}`)
         .then(response => {
           if (response.ok) return response.text();
           throw new Error('歌词文件不存在');
@@ -636,7 +696,57 @@ export default defineComponent({
       }
     });
 
-    // 计算属性
+    // 获取歌曲名称的首字母
+    const getFirstLetter = (text: string): string => {
+      if (!text || text.length === 0) {
+        return '#'; // 其他
+      }
+      
+      const firstChar = text.charAt(0);
+      
+      // 检查是否为中文
+      if (/[\u4e00-\u9fa5]/.test(firstChar)) {
+        // 使用Unicode范围判断中文拼音首字母
+        const code = firstChar.charCodeAt(0);
+        
+        // 简单的拼音首字母判断逻辑
+        if (code >= 0x4e00 && code < 0x54c0) return 'A';
+        if (code >= 0x54c0 && code < 0x5c30) return 'B';
+        if (code >= 0x5c30 && code < 0x6558) return 'C';
+        if (code >= 0x6558 && code < 0x7000) return 'D';
+        if (code >= 0x7000 && code < 0x7730) return 'E';
+        if (code >= 0x7730 && code < 0x7a60) return 'F';
+        if (code >= 0x7a60 && code < 0x8400) return 'G';
+        if (code >= 0x8400 && code < 0x8c00) return 'H';
+        if (code >= 0x8c00 && code < 0x9600) return 'J';
+        if (code >= 0x9600 && code < 0x9ea0) return 'K';
+        if (code >= 0x9ea0 && code < 0xa8c0) return 'L';
+        if (code >= 0xa8c0 && code < 0xb580) return 'M';
+        if (code >= 0xb580 && code < 0xbdc0) return 'N';
+        if (code >= 0xbdc0 && code < 0xc0b0) return 'O';
+        if (code >= 0xc0b0 && code < 0xc9c0) return 'P';
+        if (code >= 0xc9c0 && code < 0xd4c0) return 'Q';
+        if (code >= 0xd4c0 && code < 0xd8c0) return 'R';
+        if (code >= 0xd8c0 && code < 0xe4c0) return 'S';
+        if (code >= 0xe4c0 && code < 0xe8c0) return 'T';
+        if (code >= 0xe8c0 && code < 0xf0c0) return 'W';
+        if (code >= 0xf0c0 && code < 0xf900) return 'X';
+        if (code >= 0xf900 && code <= 0x9fa5) return 'Y';
+        if (code >= 0x3400 && code <= 0x4db5) return 'Z'; // 扩展汉字
+        
+        return '#'; // 其他汉字
+      }
+      
+      // 检查是否为英文
+      if (/[a-zA-Z]/.test(firstChar)) {
+        return firstChar.toUpperCase();
+      }
+      
+      // 其他字符归为'其'
+      return '#';
+    };
+
+    // 计算属性：按歌手分类
     const songsByArtist = computed(() => {
       const groups: Record<string, SongFile[]> = {};
       songs.value.forEach(song => {
@@ -645,12 +755,73 @@ export default defineComponent({
         }
         groups[song.artist]?.push(song);
       });
-      return groups;
+      
+      // 根据排序方向对分组进行排序
+      const sortedGroups: Record<string, SongFile[]> = {};
+      const sortedKeys = Object.keys(groups).sort((a, b) => {
+        if (sortOrder.value === 'asc') {
+          return a.localeCompare(b);
+        } else {
+          return b.localeCompare(a);
+        }
+      });
+      
+      sortedKeys.forEach(key => {
+        sortedGroups[key] = groups[key];
+      });
+      
+      return sortedGroups;
     });
+
+    // 计算属性：按首字母分类
+    const songsByFirstLetter = computed(() => {
+      const groups: Record<string, SongFile[]> = {};
+      songs.value.forEach(song => {
+        const firstLetter = getFirstLetter(song.displayName);
+        if (!groups[firstLetter]) {
+          groups[firstLetter] = [];
+        }
+        groups[firstLetter]?.push(song);
+      });
+      
+      // 根据排序方向对分组进行排序
+      const sortedGroups: Record<string, SongFile[]> = {};
+      const sortedKeys = Object.keys(groups).sort((a, b) => {
+        // 特殊处理 '#' 分组，将其放在最后
+        if (a === '#') return 1;
+        if (b === '#') return -1;
+        
+        if (sortOrder.value === 'asc') {
+          return a.localeCompare(b);
+        } else {
+          return b.localeCompare(a);
+        }
+      });
+      
+      sortedKeys.forEach(key => {
+        sortedGroups[key] = groups[key];
+      });
+      
+      return sortedGroups;
+    });
+
+    // 切换分类模式
+    const toggleCategoryMode = () => {
+      categoryMode.value = categoryMode.value === 'artist' ? 'firstLetter' : 'artist';
+    };
+    
+    // 切换排序方向
+    const toggleSortOrder = () => {
+      sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc';
+    };
 
     return {
       songs,
       songsByArtist,
+      songsByFirstLetter,
+      categoryMode,
+      sortOrder,
+      toggleSortOrder,
       audioUrl,
       currentTime,
       duration,
@@ -685,7 +856,8 @@ export default defineComponent({
       setPlayMode,
       showLyricsPanel,
       toggleLyricsDisplay,
-      getCurrentLyrics
+      getCurrentLyrics,
+      toggleCategoryMode
     };
   }
 });
@@ -731,6 +903,53 @@ h2 {
   position: relative;
   padding-bottom: 10px;
 }
+
+/* 分类控制按钮样式 */
+.category-controls {
+  display: flex;
+  justify-content: center;
+  gap: 15px;
+  margin-bottom: 30px;
+}
+
+.category-btn, .sort-btn {
+  padding: 12px 24px;
+  border: none;
+  border-radius: 25px;
+  background-color: rgba(255, 255, 255, 0.8);
+  color: #5e35b1;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+}
+
+.category-btn:hover, .sort-btn:hover {
+  background-color: rgba(255, 255, 255, 1);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+}
+
+.category-btn.active {
+  background-color: #7e57c2;
+  color: white;
+  box-shadow: 0 4px 15px rgba(126, 87, 194, 0.3);
+}
+
+.sort-btn {
+  background-color: rgba(33, 150, 243, 0.8);
+  color: white;
+}
+
+.sort-btn:hover {
+  background-color: #2196F3;
+}
+
+.sort-btn.active {
+    background-color: #FF9800;
+    box-shadow: 0 4px 15px rgba(255, 152, 0, 0.3);
+  }
 
 h2::after {
   content: '';
