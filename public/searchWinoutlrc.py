@@ -36,14 +36,3 @@ print(f"总共有 {len(lrc_files)} 个歌词文件")
 print(f"没有对应歌词文件的歌曲有 {len(no_lrc_songs)} 首：")
 for song in no_lrc_songs:
     print(f"- {song}")
-
-# 将结果保存到文件
-save_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'no_lrc_songs.txt')
-with open(save_file, 'w', encoding='utf-8') as f:
-    f.write(f"总共有 {len(music_files)} 首MP3歌曲\n")
-    f.write(f"总共有 {len(lrc_files)} 个歌词文件\n")
-    f.write(f"没有对应歌词文件的歌曲有 {len(no_lrc_songs)} 首：\n")
-    for song in no_lrc_songs:
-        f.write(f"- {song}\n")
-
-print(f"\n结果已保存到 {save_file}")
