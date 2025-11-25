@@ -24,10 +24,4 @@ dist-ssr
 *.sw?
 
 # floder
-src/resource/
 vite-project/
-public/music/
-public/lrc/
-
-# files
-public/songs.json
