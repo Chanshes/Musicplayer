@@ -1,7 +1,7 @@
 <!-- 模板部分 -->
 <template>
   <div class="music-player">
-    <h2>本地音乐播放器</h2>
+    <h2>Music Club</h2>
 
     <!-- 分类模式切换 -->
     <div class="category-controls">
@@ -131,23 +131,51 @@
     </transition>
   </div>
 
-  <!-- 歌词面板（左侧） -->
-  <div class="lyrics-panel" :class="{ open: showLyricsPanel }"
-    :style="{ transform: showLyricsPanel ? 'translateX(0)' : 'translateX(-100%)' }">
-    <div class="lyrics-panel-header">
+  <!-- 歌词面板（可拖动与设置） -->
+  <div
+    class="lyrics-panel"
+    :class="{ open: showLyricsPanel }"
+    :style="{
+      transform: showLyricsPanel ? 'translateX(0)' : 'translateX(' + hiddenTranslateX + ')',
+      top: panelPosition.top + 'px',
+      left: panelPosition.left + 'px',
+      width: lyricsSettings.width + 'px'
+    }"
+    ref="lyricsPanelRef"
+  >
+    <div class="lyrics-panel-header" @mousedown="startDrag" :style="{ background: `rgba(245,245,245,${lyricsSettings.opacity})` }">
       <span>歌词 - {{ currentSong?.displayName || '' }}</span>
-      <button class="close-lyrics-btn" @click="toggleLyricsDisplay">×</button>
+      <div class="lyrics-header-actions">
+        <button class="settings-btn" @click.stop="toggleLyricsSettings" title="设置">⚙</button>
+        <button class="close-lyrics-btn" @click="toggleLyricsDisplay">×</button>
+      </div>
+    </div>
+
+    <div v-if="showLyricsSettings" class="lyrics-settings">
+      <div class="setting-item">
+        <label>长度</label>
+        <input type="range" min="240" max="640" v-model.number="lyricsSettings.width" @input="persistLyricsSettings" />
+      </div>
+      <div class="setting-item">
+        <label>颜色</label>
+        <input type="color" v-model="lyricsSettings.textColor" @input="persistLyricsSettings" />
+      </div>
+      <div class="setting-item">
+        <label>透明度</label>
+        <input type="range" min="0.3" max="1" step="0.05" v-model.number="lyricsSettings.opacity" @input="persistLyricsSettings" />
+      </div>
     </div>
 
     <div class="lyrics-panel-content">
       <div v-if="!currentSong?.lrcLines || currentSong.lrcLines.length === 0" class="no-lyrics">
         暂无歌词
       </div>
-      <div v-else class="lyrics-lines">
-        <div 
-          v-for="(line, index) in getCurrentLyrics()" 
+      <div v-else class="lyrics-lines" :style="{ background: `rgba(255,255,255,${lyricsSettings.opacity})` }">
+        <div
+          v-for="(line, index) in getCurrentLyrics()"
           :key="index"
           :class="['lyrics-line', { current: line.isCurrent }]"
+          :style="{ color: lyricsSettings.textColor }"
         >
           {{ line.text }}
         </div>
@@ -240,6 +268,12 @@ export default defineComponent({
     // 歌词相关状态
     const currentLrcIndex = ref(-1);
     const showLyricsPanel = ref(false);
+    const lyricsPanelRef = ref<HTMLElement | null>(null);
+    const dragging = ref(false);
+    const dragOffset = ref({ x: 0, y: 0 });
+    const panelPosition = ref({ top: Math.round(window.innerHeight * 0.2), left: 0 });
+    const showLyricsSettings = ref(false);
+    const lyricsSettings = ref({ width: 320, textColor: '#5e35b1', opacity: 1 });
     
     // 分类模式状态
     const categoryMode = ref<'artist' | 'firstLetter'>('artist');
@@ -667,6 +701,35 @@ export default defineComponent({
       playerBarClosed.value = !playerBarClosed.value;
     };
 
+    const startDrag = (e: MouseEvent) => {
+      if (!lyricsPanelRef.value) return;
+      dragging.value = true;
+      const rect = lyricsPanelRef.value.getBoundingClientRect();
+      dragOffset.value = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      e.preventDefault();
+    };
+
+    const onDrag = (e: MouseEvent) => {
+      if (!dragging.value) return;
+      const newLeft = Math.min(Math.max(e.clientX - dragOffset.value.x, 0), window.innerWidth - lyricsSettings.value.width);
+      const newTop = Math.min(Math.max(e.clientY - dragOffset.value.y, 0), window.innerHeight - 120);
+      panelPosition.value = { top: Math.round(newTop), left: Math.round(newLeft) };
+    };
+
+    const endDrag = () => {
+      if (!dragging.value) return;
+      dragging.value = false;
+      localStorage.setItem('lyricsPanelPos', JSON.stringify(panelPosition.value));
+    };
+
+    const toggleLyricsSettings = () => {
+      showLyricsSettings.value = !showLyricsSettings.value;
+    };
+
+    const persistLyricsSettings = () => {
+      localStorage.setItem('lyricsSettings', JSON.stringify(lyricsSettings.value));
+    };
+
     // 组件挂载时加载数据
     onMounted(() => {
       loadSongs().then(() => {
@@ -681,6 +744,28 @@ export default defineComponent({
 
       audioElement.addEventListener('timeupdate', handleAudioTimeUpdate);
       audioElement.addEventListener('ended', handleAudioEnded);
+      try {
+        const saved = localStorage.getItem('lyricsSettings');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          lyricsSettings.value = {
+            width: Math.min(Math.max(parsed.width ?? 320, 240), 640),
+            textColor: parsed.textColor ?? '#5e35b1',
+            opacity: typeof parsed.opacity === 'number' ? Math.min(Math.max(parsed.opacity, 0.3), 1) : 1
+          };
+        }
+        const savedPos = localStorage.getItem('lyricsPanelPos');
+        if (savedPos) {
+          const pos = JSON.parse(savedPos);
+          panelPosition.value = {
+            top: Math.min(Math.max(pos.top ?? panelPosition.value.top, 0), window.innerHeight - 120),
+            left: Math.min(Math.max(pos.left ?? panelPosition.value.left, 0), window.innerWidth - lyricsSettings.value.width)
+          };
+        }
+      } catch {}
+
+      window.addEventListener('mousemove', onDrag);
+      window.addEventListener('mouseup', endDrag);
     });
 
     // 组件卸载时清理
@@ -694,6 +779,8 @@ export default defineComponent({
       if (noteElement.value && noteElement.value.parentNode) {
         noteElement.value.parentNode.removeChild(noteElement.value);
       }
+      window.removeEventListener('mousemove', onDrag);
+      window.removeEventListener('mouseup', endDrag);
     });
 
     // 获取歌曲名称的首字母
@@ -814,6 +901,9 @@ export default defineComponent({
     const toggleSortOrder = () => {
       sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc';
     };
+    const hiddenTranslateX = computed(() => {
+      return `-${panelPosition.value.left + lyricsSettings.value.width + 40}px`;
+    });
 
     return {
       songs,
@@ -857,7 +947,17 @@ export default defineComponent({
       showLyricsPanel,
       toggleLyricsDisplay,
       getCurrentLyrics,
-      toggleCategoryMode
+      toggleCategoryMode,
+      lyricsPanelRef,
+      panelPosition,
+      startDrag,
+      onDrag,
+      endDrag,
+      showLyricsSettings,
+      toggleLyricsSettings,
+      lyricsSettings,
+      persistLyricsSettings,
+      hiddenTranslateX
     };
   }
 });
@@ -988,25 +1088,27 @@ h2::after {
 }
 
 .artist-section {
-  margin-bottom: 30px;
-  padding: 15px;
-  background: rgba(255, 255, 255, 0.8);
-  border-radius: 15px;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
-  transition: all 0.3s ease;
+  margin-bottom: 28px;
+  padding: 16px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.65), rgba(255,255,255,0.5));
+  border-radius: 18px;
+  box-shadow: 0 12px 26px rgba(94, 53, 177, 0.12);
+  transition: all 0.25s ease;
+  border: 1px solid rgba(126, 87, 194, 0.15);
+  backdrop-filter: blur(10px);
 }
 
 .artist-section h3 {
-  margin-bottom: 15px;
-  padding-bottom: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 6px;
   color: #5e35b1;
-  border-bottom: 2px solid rgba(126, 87, 194, 0.2);
+  border-bottom: 2px solid rgba(126, 87, 194, 0.22);
 }
 
 .songs-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 15px;
+  gap: 12px;
 }
 
 .song-item {
@@ -1019,52 +1121,51 @@ h2::after {
 }
 
 .button-bubble {
-  padding: 12px 24px;
-  border: none;
-  border-radius: 50px;
-  font-size: 1.25rem;
+  padding: 12px 18px;
+  border: 1px solid rgba(126, 87, 194, 0.25);
+  border-radius: 14px;
+  font-size: 1.05rem;
   font-weight: 700;
   cursor: pointer;
-  color: white;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  transition: all 0.3s ease;
+  color: #fff;
+  transition: all 0.2s ease;
   position: relative;
   overflow: visible;
   width: 100%;
   text-align: center;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
-  background: linear-gradient(135deg, #7e57c2 0%, #5e35b1 100%);
+  box-shadow: 0 10px 20px rgba(94, 53, 177, 0.18);
+  background: linear-gradient(135deg, rgba(126, 87, 194, 0.9), rgba(94, 53, 177, 0.9));
 }
 
 .button-bubble:hover {
-  transform: scale(1.05);
-  box-shadow: 0 6px 20px rgba(126, 87, 194, 0.3);
-  background: linear-gradient(135deg, #9575cd 0%, #7e57c2 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 16px 28px rgba(94, 53, 177, 0.28);
+  background: linear-gradient(135deg, rgba(149, 117, 205, 0.95), rgba(126, 87, 194, 0.95));
 }
 
 .button-bubble.currently-playing {
   position: relative;
   animation: pulse 2s infinite;
-  box-shadow: 0 0 20px rgba(126, 87, 194, 0.4);
+  box-shadow: 0 0 20px rgba(126, 87, 194, 0.45);
   z-index: 2;
 }
 
 .button-bubble.currently-playing::after {
   content: '♪';
   position: absolute;
-  top: -15px;
-  right: 15px;
-  background: linear-gradient(135deg, #f02819, #ff9800);
+  top: -12px;
+  right: 12px;
+  background: linear-gradient(135deg, #ffeb3b, #ffc107);
   color: #333;
-  border-radius: 50%;
-  width: 40px;
-  height: 40px;
+  border-radius: 10px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 24px;
+  font-size: 18px;
   font-weight: bold;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 8px 16px rgba(94, 53, 177, 0.25);
   animation: bounce 1.5s ease-in-out infinite;
   z-index: 3;
 }
@@ -1092,45 +1193,44 @@ h2::after {
 
 .add-to-playlist-btn {
   position: absolute;
-  right: 15px;
+  right: 10px;
   top: 50%;
   transform: translateY(-50%);
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #4caf50, #2e7d32);
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(76,175,80,0.85), rgba(46,125,50,0.85));
   color: white;
-  border: none;
-  font-size: 1.5rem;
-  font-weight: bold;
+  border: 1px solid rgba(255,255,255,0.25);
+  font-size: 1.2rem;
+  font-weight: 700;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 5;
-  transition: all 0.3s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-  right: 10px;
+  transition: all 0.2s ease;
+  box-shadow: 0 6px 12px rgba(46, 125, 50, 0.35);
 }
 
 .add-to-playlist-btn:hover {
-  background: linear-gradient(135deg, #66bb6a, #388e3c);
-  transform: translateY(-50%) scale(1.1);
+  background: linear-gradient(135deg, rgba(102,187,106,0.95), rgba(56,142,60,0.95));
+  transform: translateY(-50%) translateY(-1px) scale(1.05);
 }
 
 .player-bar {
   position: fixed;
   left: 10%;
-  bottom: 0;
+  bottom: 16px;
   width: 80%;
-  background: linear-gradient(135deg, #5e35b1, #4527a0);
+  background: linear-gradient(135deg, rgba(126, 87, 194, 0.24), rgba(94, 53, 177, 0.18));
   color: #fff;
-  box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 20px 40px rgba(94, 53, 177, 0.25);
   z-index: 999;
-  transition: transform 0.3s ease;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 20px 20px 0 0;
-  z-index: 999;
+  transition: transform 0.3s ease, box-shadow 0.3s ease, background 0.3s ease;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 16px;
+  backdrop-filter: blur(12px) saturate(120%);
 }
 
 .player-bar.closed {
@@ -1141,37 +1241,37 @@ h2::after {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 2px 20px;
-  cursor: pointer;
+  padding: 10px 18px;
   z-index: 1000;
 }
 
 .toggle-player-bar {
-  background: rgba(255, 255, 255, 0.15);
-  border: none;
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 10px;
   color: #fff;
-  font-size: 1.2rem;
+  font-size: 1rem;
   cursor: pointer;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.2s;
+  transition: all 0.2s ease;
   z-index: 1001;
 }
 
 .toggle-player-bar:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.28);
+  transform: translateY(-1px);
 }
 
 .player-bar-content {
-  padding: 3px 20px 20px 20px;
+  padding: 12px 18px 16px 18px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  background: rgba(0, 0, 0, 0.1);
+  gap: 10px;
   z-index: 999;
 }
 
@@ -1197,50 +1297,51 @@ h2::after {
 .player-buttons {
   display: flex;
   justify-content: center;
-  gap: 16px;
-  margin: 10px 0;
+  gap: 12px;
+  margin: 6px 0 12px 0;
   z-index: 1000;
 }
 
 .player-btn {
-  background: rgba(255, 255, 255, 0.15);
-  border: none;
-  border-radius: 50%;
-  width: 50px;
-  height: 50px;
-  font-size: 1.5rem;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.12));
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 14px;
+  width: 44px;
+  height: 44px;
+  font-size: 1.2rem;
   color: #fff;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+  box-shadow: 0 8px 18px rgba(94, 53, 177, 0.25);
   z-index: 1001;
 }
 
 .player-btn:hover {
-  background: rgba(255, 255, 255, 0.25);
-  transform: scale(1.1);
+  background: rgba(255, 255, 255, 0.28);
+  transform: translateY(-1px) scale(1.05);
 }
 
 .player-btn.play-btn {
-  background: rgba(255, 255, 255, 0.25);
-  font-size: 1.8rem;
+  background: linear-gradient(135deg, rgba(126, 87, 194, 0.35), rgba(94, 53, 177, 0.35));
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  font-size: 1.4rem;
   z-index: 1001;
 }
 
 .progress-container {
   display: flex;
   align-items: center;
-  gap: 15px;
+  gap: 12px;
   width: 100%;
   z-index: 999;
 }
 
 .time {
-  font-size: 0.9rem;
-  min-width: 50px;
+  font-size: 0.85rem;
+  min-width: 44px;
   text-align: center;
   font-variant-numeric: tabular-nums;
   color: #e0e0ff;
@@ -1249,32 +1350,42 @@ h2::after {
 
 .progress-bar {
   flex: 1;
-  height: 8px;
+  height: 10px;
   -webkit-appearance: none;
   appearance: none;
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 4px;
+  background: linear-gradient(90deg, rgba(126, 87, 194, 0.25), rgba(94, 53, 177, 0.25));
+  border-radius: 8px;
   outline: none;
   overflow: hidden;
   z-index: 999;
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .progress-bar::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #ffeb3b;
+  width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #ffeb3b, #ffc107);
   cursor: pointer;
-  transition: all 0.2s;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
-  border: 2px solid white;
+  transition: all 0.2s ease;
+  box-shadow: 0 6px 12px rgba(94, 53, 177, 0.35);
+  border: 2px solid rgba(255, 255, 255, 0.85);
   z-index: 1000;
 }
 
 .progress-bar::-webkit-slider-thumb:hover {
-  transform: scale(1.2);
-  background: #ffc107;
+  transform: scale(1.08);
+}
+
+.player-bar-slide-enter-active,
+.player-bar-slide-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.player-bar-slide-enter-from,
+.player-bar-slide-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }
 
 /* QQ音乐风格歌词按钮样式 */
@@ -1373,6 +1484,32 @@ h2::after {
   z-index: 10;
 }
 
+.lyrics-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings-btn {
+  background: rgba(255, 255, 255, 0.3);
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  color: #666;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.settings-btn:hover {
+  background: rgba(255, 255, 255, 0.5);
+  color: #333;
+}
+
 .lyrics-panel-header span {
   font-weight: 600;
   color: #333;
@@ -1406,6 +1543,36 @@ h2::after {
   background: transparent;
   border-radius: 0 0 0 8px;
   z-index: 9;
+}
+
+.lyrics-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid #e0e0e0;
+  border-radius: 0 0 0 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.setting-item {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.setting-item input[type="range"] {
+  width: 100%;
+}
+
+.setting-item input[type="color"] {
+  width: 48px;
+  height: 24px;
+  padding: 0;
 }
 
 .no-lyrics {
@@ -1447,20 +1614,21 @@ h2::after {
   top: 20%;
   right: 0;
   width: 320px;
-  background: white;
-  box-shadow: -2px 0 16px rgba(0, 0, 0, 0.2);
-  border-radius: 8px 0 0 8px;
+  background: linear-gradient(135deg, rgba(255,255,255,0.75), rgba(255,255,255,0.6));
+  box-shadow: -2px 10px 24px rgba(94, 53, 177, 0.18);
+  border-radius: 12px 0 0 12px;
   z-index: 1000;
   display: flex;
   flex-direction: column;
   transform: translateX(100%);
   transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.27, 1.155);
-  border: 1px solid #e0e0e0;
+  border: 1px solid rgba(126,87,194,0.2);
+  backdrop-filter: blur(10px);
 }
 
 .playlist-popup.open {
   transform: translateX(0);
-  box-shadow: -2px 0 20px rgba(0, 0, 0, 0.3);
+  box-shadow: -2px 0 24px rgba(94, 53, 177, 0.28);
   z-index: 1001;
 }
 
@@ -1469,58 +1637,58 @@ h2::after {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  background: #f5f5f5;
-  border-bottom: 1px solid #e0e0e0;
+  background: rgba(245,245,245,0.9);
+  border-bottom: 1px solid rgba(126,87,194,0.15);
   z-index: 10;
 }
 
 .clear-btn {
-  background: linear-gradient(135deg, #ff5252, #d32f2f);
+  background: linear-gradient(135deg, rgba(255,82,82,0.9), rgba(211,47,47,0.9));
   color: white;
-  border: none;
-  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 8px;
   font-size: 0.9rem;
   font-weight: 700;
   padding: 4px 12px;
   cursor: pointer;
-  transition: all 0.2s;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+  box-shadow: 0 8px 14px rgba(211, 47, 47, 0.25);
   z-index: 11;
 }
 
 .clear-btn:hover {
-  background: linear-gradient(135deg, #ff6b6b, #e53935);
+  background: linear-gradient(135deg, rgba(255,107,107,0.95), rgba(229,57,53,0.95));
   z-index: 12;
 }
 
 .play-modes {
   display: flex;
   justify-content: center;
-  gap: 12px;
-  padding: 12px;
-  background: #f9f9f9;
-  border-bottom: 1px solid #e0e0e0;
+  gap: 10px;
+  padding: 10px;
+  background: rgba(249,249,249,0.9);
+  border-bottom: 1px solid rgba(126,87,194,0.15);
   z-index: 10;
 }
 
 .mode-btn {
-  padding: 6px 18px;
-  border-radius: 20px;
-  border: none;
-  background: #e0e0e0;
+  padding: 6px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(126,87,194,0.25);
+  background: linear-gradient(135deg, rgba(224,224,224,0.9), rgba(240,240,240,0.9));
   color: #555;
-  font-size: 1rem;
+  font-size: 0.95rem;
   font-weight: 700;
   cursor: pointer;
-  transition: all 0.2s;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+  box-shadow: 0 8px 14px rgba(94, 53, 177, 0.1);
   z-index: 11;
 }
 
 .mode-btn.active {
-  background: linear-gradient(135deg, #7e57c2, #5e35b1);
+  background: linear-gradient(135deg, rgba(126, 87, 194, 0.9), rgba(94, 53, 177, 0.9));
   color: white;
-  box-shadow: 0 0 10px rgba(126, 87, 194, 0.3);
+  box-shadow: 0 0 12px rgba(126, 87, 194, 0.35);
   z-index: 12;
 }
 
@@ -1529,8 +1697,8 @@ h2::after {
   overflow-y: auto;
   max-height: 50vh;
   min-height: 25vh;
-  background: white;
-  border-radius: 0 0 8px 8px;
+  background: transparent;
+  border-radius: 0 0 12px 12px;
   z-index: 9;
 }
 
@@ -1552,32 +1720,34 @@ h2::after {
   width: 100%;
   text-align: left;
   padding: 12px 50px 12px 16px;
-  border: none;
-  border-radius: 8px;
-  background: #f9f9f9;
+  border: 1px solid rgba(126,87,194,0.18);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(249,249,249,0.95), rgba(240,240,240,0.95));
   color: #333;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
   position: relative;
   overflow: hidden;
   z-index: 11;
+  box-shadow: 0 8px 14px rgba(94, 53, 177, 0.08);
 }
 
 .playlist-item:hover {
-  background: #f0f0f0;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  background: linear-gradient(135deg, rgba(245,245,245,0.95), rgba(234,234,234,0.95));
+  transform: translateY(-1px);
+  box-shadow: 0 12px 20px rgba(94, 53, 177, 0.14);
   z-index: 12;
 }
 
 .playlist-item.playing {
-  background: linear-gradient(135deg, rgba(126, 87, 194, 0.1), rgba(94, 53, 177, 0.1));
+  background: linear-gradient(135deg, rgba(126, 87, 194, 0.12), rgba(94, 53, 177, 0.12));
   color: #5e35b1;
   font-weight: 700;
-  box-shadow: 0 0 15px rgba(126, 87, 194, 0.2);
+  box-shadow: 0 0 16px rgba(126, 87, 194, 0.28);
   z-index: 13;
+  border-color: rgba(126,87,194,0.35);
 }
 
 .playlist-item.playing::after {
@@ -1588,14 +1758,15 @@ h2::after {
   transform: translateY(-50%);
   font-size: 14px;
   color: #5e35b1;
-  background: rgba(255, 255, 255, 0.7);
+  background: linear-gradient(135deg, rgba(255,255,255,0.8), rgba(255,255,255,0.65));
   width: 30px;
   height: 30px;
-  border-radius: 50%;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 14;
+  border: 1px solid rgba(126,87,194,0.2);
 }
 
 .remove-btn {
@@ -1620,8 +1791,8 @@ h2::after {
 }
 
 .remove-btn:hover {
-  background: rgba(211, 47, 47, 0.1);
-  transform: translateY(-50%) scale(1.1);
+  background: rgba(211, 47, 47, 0.12);
+  transform: translateY(-50%) translateY(-1px) scale(1.05);
   z-index: 16;
 }
 
@@ -1641,9 +1812,9 @@ h2::after {
   top: 50%;
   right: 0;
   transform: translateY(-50%);
-  background: linear-gradient(135deg, #7e57c2, #5e35b1);
+  background: linear-gradient(135deg, rgba(126,87,194,0.95), rgba(94,53,177,0.95));
   color: white;
-  border: none;
+  border: 1px solid rgba(255,255,255,0.3);
   border-radius: 50% 0 0 50%;
   width: 40px;
   height: 40px;
@@ -1651,16 +1822,16 @@ h2::after {
   font-size: 1.2rem;
   cursor: pointer;
   z-index: 1001;
-  transition: all 0.3s;
+  transition: all 0.2s ease;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.2);
+  box-shadow: -2px 10px 18px rgba(94, 53, 177, 0.2);
 }
 
 .playlist-toggle.open {
   right: 305px;
-  background: linear-gradient(135deg, #9575cd, #7e57c2);
+  background: linear-gradient(135deg, rgba(149,117,205,0.95), rgba(126,87,194,0.95));
   border-radius: 50%;
   transform: translateY(-50%) rotate(180deg);
   z-index: 1002;
