@@ -1,7 +1,7 @@
 <!-- 模板部分 -->
 <template>
   <div class="music-player">
-    <h2>本地音乐播放器</h2>
+    <h2>Music Club</h2>
 
     <!-- 分类模式切换 -->
     <div class="category-controls">
